@@ -3,8 +3,9 @@ const { MongoClient, ServerApiVersion } = require("mongodb");
 const express = require("express");
 const cors = require("cors");
 
-const app = express();
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
+const app = express();
 app.use(cors());
 app.use(express.json());
 
@@ -31,6 +32,30 @@ async function run() {
     app.get("/parcels", async (req, res) => {
       const parcels = await parcelCollection.find().toArray();
       res.send(parcels);
+    });
+
+    // GET parcel by ID
+    app.get("/parcels/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+
+        const parcel = await parcelCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!parcel) {
+          return res
+            .status(404)
+            .send({ success: false, message: "Parcel not found" });
+        }
+
+        res.send({ success: true, data: parcel });
+      } catch (error) {
+        console.error("Error fetching parcel by ID:", error);
+        res
+          .status(500)
+          .send({ success: false, message: "Failed to fetch parcel" });
+      }
     });
 
     // POST API to add a new parcel
@@ -94,6 +119,25 @@ async function run() {
         res
           .status(500)
           .send({ success: false, message: "Failed to delete parcel" });
+      }
+    });
+
+    // POST /create-payment-intent
+    app.post("/create-payment-intent", async (req, res) => {
+      const amount = req.body.amount;
+      try {
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: Math.round(amount * 100), // amount in paisa (smallest currency unit)
+          currency: "bdt",
+          payment_method_types: ["card"],
+        });
+
+        res.json({
+          clientSecret: paymentIntent.client_secret,
+        });
+      } catch (error) {
+        console.error("Error creating payment intent:", error);
+        res.status(500).json({ error: "Internal Server Error" });
       }
     });
 
