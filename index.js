@@ -144,6 +144,29 @@ async function run() {
       }
     });
 
+    // POST /tracking
+    app.post("/tracking", async (req, res) => {
+      const {
+        trackingId,
+        parcelId,
+        status,
+        message,
+        updated_by = "",
+      } = req.body;
+
+      const log = {
+        trackingId,
+        parcelId: parcelId ? new ObjectId(parcelId) : undefined,
+        status,
+        message,
+        time: new Date(),
+        updated_by,
+      };
+
+      const result = await trackingCollection.insertOne(log);
+      res.send({ success: true, insertedId: result.insertedId });
+    });
+
     // POST /payments - mark parcel as paid and save payment record
     app.post("/payments", async (req, res) => {
       try {
