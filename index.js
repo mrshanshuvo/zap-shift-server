@@ -27,6 +27,7 @@ async function run() {
 
     const db = client.db("parcelDB"); // or any DB name you want
     const parcelCollection = db.collection("parcels");
+    const paymentCollection = db.collection("payments");
 
     // GET API to fetch all parcels
     app.get("/parcels", async (req, res) => {
@@ -119,6 +120,82 @@ async function run() {
         res
           .status(500)
           .send({ success: false, message: "Failed to delete parcel" });
+      }
+    });
+
+    // GET /payments?email=someone@example.com
+    app.get("/payments", async (req, res) => {
+      try {
+        const email = req.query.email;
+
+        const filter = email ? { email } : {};
+
+        const payments = await paymentCollection
+          .find(filter)
+          .sort({ payment_time: -1 }) // latest first
+          .toArray();
+
+        res.send({ success: true, data: payments });
+      } catch (error) {
+        console.error("Error fetching payments:", error);
+        res
+          .status(500)
+          .send({ success: false, message: "Failed to fetch payment history" });
+      }
+    });
+
+    // POST /payments - mark parcel as paid and save payment record
+    app.post("/payments", async (req, res) => {
+      try {
+        const {
+          parcelId,
+          email,
+          transactionId,
+          amount,
+          paymentTime,
+          paymentMethod,
+        } = req.body;
+
+        if (!parcelId || !email || !transactionId || !amount) {
+          return res
+            .status(400)
+            .send({ success: false, message: "Missing payment information" });
+        }
+
+        // 1. Update the parcel's payment_status to "paid"
+        const parcelUpdateResult = await parcelCollection.updateOne(
+          { _id: new ObjectId(parcelId) },
+          { $set: { payment_status: "paid" } }
+        );
+
+        // 2. Insert into payments collection
+        const paymentRecord = {
+          parcelId: new ObjectId(parcelId),
+          email, // could be same as created_by
+          transactionId,
+          amount: amount / 100,
+          paymentMethod,
+          paid_at: new Date().toISOString(),
+          payment_time: paymentTime || new Date(), // fallback to server time
+        };
+
+        const paymentInsertResult = await paymentCollection.insertOne(
+          paymentRecord
+        );
+
+        res.send({
+          success: true,
+          message: "Payment recorded, parcel marked as paid",
+          data: {
+            parcelUpdateResult,
+            paymentInsertResult,
+          },
+        });
+      } catch (error) {
+        console.error("Error in /payments:", error);
+        res
+          .status(500)
+          .send({ success: false, message: "Internal server error" });
       }
     });
 
