@@ -1,5 +1,5 @@
 require("dotenv").config();
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const express = require("express");
 const cors = require("cors");
 
@@ -22,17 +22,54 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-    // Connect the client to the server	(optional starting in v4.7)
     await client.connect();
 
-    const db = client.db("parcelDB"); // or any DB name you want
+    const db = client.db("parcelDB");
+    const usersCollection = db.collection("users");
     const parcelCollection = db.collection("parcels");
     const paymentCollection = db.collection("payments");
 
-    // GET API to fetch all parcels
+    app.post("/users", async (req, res) => {
+      const email = req.body.email;
+      const user = req.body;
+
+      const updateDoc = {
+        $setOnInsert: {
+          name: user.name,
+          photoURL: user.photoURL,
+          role: user.role,
+          created_at: user.created_at,
+        },
+        $set: {
+          last_login: user.last_login,
+        },
+      };
+
+      const result = await usersCollection.updateOne(
+        { email: email },
+        updateDoc,
+        { upsert: true }
+      );
+
+      res.send(result);
+    });
+
+    // GET parcels by user email, sorted by latest creation_date first
     app.get("/parcels", async (req, res) => {
-      const parcels = await parcelCollection.find().toArray();
-      res.send(parcels);
+      try {
+        const email = req.query.email;
+        if (!email) return res.status(400).send([]);
+
+        const parcels = await parcelCollection
+          .find({ created_by: email })
+          .sort({ creation_date: -1 })
+          .toArray();
+
+        res.send(parcels);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send([]);
+      }
     });
 
     // GET parcel by ID
@@ -77,33 +114,6 @@ async function run() {
         });
       }
     });
-
-    // GET parcels by user email, sorted by latest creation_date first
-    app.get("/parcels", async (req, res) => {
-      try {
-        const email = req.query.email; // Get email from query params
-
-        if (!email) {
-          return res
-            .status(400)
-            .send({ success: false, message: "Email is required" });
-        }
-
-        const parcels = await parcelCollection
-          .find({ createdBy: email })
-          .sort({ creation_date: -1 }) // descending order (latest first)
-          .toArray();
-
-        res.send({ success: true, data: parcels });
-      } catch (error) {
-        console.error("Error fetching parcels:", error);
-        res
-          .status(500)
-          .send({ success: false, message: "Failed to fetch parcels" });
-      }
-    });
-
-    const { ObjectId } = require("mongodb");
 
     // DELETE parcel by ID
     app.delete("/parcels/:id", async (req, res) => {
