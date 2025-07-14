@@ -2,12 +2,19 @@ require("dotenv").config();
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const express = require("express");
 const cors = require("cors");
+const admin = require("firebase-admin");
 
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+const serviceAccount = require("./firebase_admin.json");
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.ezlz7xu.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
@@ -28,6 +35,33 @@ async function run() {
     const usersCollection = db.collection("users");
     const parcelCollection = db.collection("parcels");
     const paymentCollection = db.collection("payments");
+    const ridersCollection = db.collection("riders");
+
+    // custom middlewares
+    const verifyFBToken = async (req, res, next) => {
+      const authHeader = req.headers.authorization;
+      if (!authHeader) {
+        return res
+          .status(401)
+          .send({ success: false, message: "Unauthorized" });
+      }
+      const token = authHeader.split(" ")[1];
+      if (!token) {
+        return res
+          .status(401)
+          .send({ success: false, message: "Unauthorized" });
+      }
+      try {
+        const decoded = await admin.auth().verifyIdToken(token);
+        req.user = decoded;
+        next();
+      } catch (error) {
+        console.error(error);
+        return res
+          .status(401)
+          .send({ success: false, message: "Unauthorized" });
+      }
+    };
 
     app.post("/users", async (req, res) => {
       const email = req.body.email;
@@ -55,7 +89,7 @@ async function run() {
     });
 
     // GET parcels by user email, sorted by latest creation_date first
-    app.get("/parcels", async (req, res) => {
+    app.get("/parcels", verifyFBToken, async (req, res) => {
       try {
         const email = req.query.email;
         if (!email) return res.status(400).send([]);
@@ -134,9 +168,16 @@ async function run() {
     });
 
     // GET /payments?email=someone@example.com
-    app.get("/payments", async (req, res) => {
+    app.get("/payments", verifyFBToken, async (req, res) => {
       try {
         const email = req.query.email;
+
+        console.log("Decoded token:", req.user);
+        if (req.user.email !== email)
+          return res.status(403).send({
+            success: false,
+            message: "Unauthorized",
+          });
 
         const filter = email ? { email } : {};
 
@@ -152,6 +193,53 @@ async function run() {
           .status(500)
           .send({ success: false, message: "Failed to fetch payment history" });
       }
+    });
+
+    // GET /riders
+    app.get("/riders/pending", async (req, res) => {
+      try {
+        const pendingRiders = await ridersCollection
+          .find({ status: "pending" })
+          .toArray();
+        res.send(pendingRiders);
+      } catch (error) {
+        console.error("Error fetching pending riders:", error.message);
+        res.status(500).send({ error: "Internal Server Error" });
+      }
+    });
+
+    app.get("/riders/approved", async (req, res) => {
+      try {
+        const approvedRiders = await ridersCollection
+          .find({ status: "approved" })
+          .toArray();
+        res.json(approvedRiders);
+      } catch (error) {
+        res.status(500).json({ error: "Internal Server Error" });
+      }
+    });
+
+    app.patch("/riders/:id/status", async (req, res) => {
+      const { id } = req.params;
+      const { status } = req.body;
+      const query = { _id: new ObjectId(id) };
+      const updateDoc = {
+        $set: { status },
+      };
+
+      try {
+        const result = await ridersCollection.updateOne(query, updateDoc);
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: "Internal Server Error" });
+      }
+    });
+
+    // POST /riders
+    app.post("/riders", async (req, res) => {
+      const rider = req.body;
+      const result = await ridersCollection.insertOne(rider);
+      res.send(result);
     });
 
     // POST /tracking
