@@ -63,6 +63,80 @@ async function run() {
       }
     };
 
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.user.email;
+      const user = await usersCollection.findOne({ email: email });
+      if (user?.role !== "admin") {
+        return res.status(403).send({ success: false, message: "Forbidden" });
+      }
+      next();
+    };
+
+    app.get("/users/search", verifyFBToken, verifyAdmin, async (req, res) => {
+      const emailQuery = req.query.email;
+
+      if (!emailQuery)
+        return res.status(400).send({ error: "Email query is required" });
+
+      try {
+        const users = await usersCollection
+          .find({
+            email: { $regex: emailQuery, $options: "i" }, // case-insensitive
+          })
+          .project({ email: 1, createdAt: 1, role: 1 }) // only necessary fields
+          .limit(10)
+          .toArray();
+
+        res.send(users);
+      } catch (error) {
+        res.status(500).send({ error: "Internal Server Error" });
+      }
+    });
+
+    app.get("/users/:email/role", async (req, res) => {
+      const { email } = req.params;
+
+      try {
+        const user = await usersCollection.findOne(
+          { email },
+          { projection: { role: 1 } }
+        );
+
+        if (!user) {
+          return res
+            .status(404)
+            .send({ success: false, message: "User not found" });
+        }
+
+        res.send({ success: true, role: user.role || "user" });
+      } catch (error) {
+        res
+          .status(500)
+          .send({ success: false, error: "Internal Server Error" });
+      }
+    });
+
+    app.patch(
+      "/users/:email/role",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const { email } = req.params;
+        const { role } = req.body;
+        try {
+          const result = await usersCollection.updateOne(
+            { email },
+            { $set: { role } }
+          );
+          res.send({ success: true, modifiedCount: result.modifiedCount });
+        } catch (error) {
+          res
+            .status(500)
+            .send({ success: false, error: "Failed to update role" });
+        }
+      }
+    );
+
     app.post("/users", async (req, res) => {
       const email = req.body.email;
       const user = req.body;
@@ -196,7 +270,7 @@ async function run() {
     });
 
     // GET /riders
-    app.get("/riders/pending", async (req, res) => {
+    app.get("/riders/pending", verifyFBToken, verifyAdmin, async (req, res) => {
       try {
         const pendingRiders = await ridersCollection
           .find({ status: "pending" })
@@ -208,20 +282,25 @@ async function run() {
       }
     });
 
-    app.get("/riders/approved", async (req, res) => {
-      try {
-        const approvedRiders = await ridersCollection
-          .find({ status: "approved" })
-          .toArray();
-        res.json(approvedRiders);
-      } catch (error) {
-        res.status(500).json({ error: "Internal Server Error" });
+    app.get(
+      "/riders/approved",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const approvedRiders = await ridersCollection
+            .find({ status: "approved" })
+            .toArray();
+          res.json(approvedRiders);
+        } catch (error) {
+          res.status(500).json({ error: "Internal Server Error" });
+        }
       }
-    });
+    );
 
     app.patch("/riders/:id/status", async (req, res) => {
       const { id } = req.params;
-      const { status } = req.body;
+      const { status, email } = req.body;
       const query = { _id: new ObjectId(id) };
       const updateDoc = {
         $set: { status },
@@ -229,6 +308,18 @@ async function run() {
 
       try {
         const result = await ridersCollection.updateOne(query, updateDoc);
+        // update user role for approved riders
+        if (status === "approved") {
+          const userQuery = { email };
+          const userUpdateDoc = {
+            $set: { role: "rider" },
+          };
+          const userResult = await usersCollection.updateOne(
+            userQuery,
+            userUpdateDoc
+          );
+          console.log("User role updated:", userResult.modifiedCount);
+        }
         res.send(result);
       } catch (error) {
         res.status(500).send({ error: "Internal Server Error" });
