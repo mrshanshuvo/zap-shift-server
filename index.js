@@ -163,20 +163,32 @@ async function run() {
     });
 
     // GET parcels by user email, sorted by latest creation_date first
+    // GET: All parcels OR parcels by user (created_by), sorted by latest
     app.get("/parcels", verifyFBToken, async (req, res) => {
       try {
-        const email = req.query.email;
-        if (!email) return res.status(400).send([]);
+        const { email, payment_status, delivery_status } = req.query;
+        let query = {};
+        if (email) {
+          query = { created_by: email };
+        }
 
-        const parcels = await parcelCollection
-          .find({ created_by: email })
-          .sort({ creation_date: -1 })
-          .toArray();
+        if (payment_status) {
+          query.payment_status = payment_status;
+        }
 
+        if (delivery_status) {
+          query.delivery_status = delivery_status;
+        }
+
+        const options = {
+          sort: { createdAt: -1 }, // Newest first
+        };
+
+        const parcels = await parcelCollection.find(query, options).toArray();
         res.send(parcels);
       } catch (error) {
-        console.error(error);
-        res.status(500).send([]);
+        console.error("Error fetching parcels:", error);
+        res.status(500).send({ message: "Failed to get parcels" });
       }
     });
 
