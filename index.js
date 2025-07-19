@@ -314,8 +314,6 @@ async function run() {
       }
     );
 
-    // Add these 2 endpoints to your existing backend
-
     // GET /riders?status=available - Get available riders
     app.get("/riders", verifyFBToken, verifyAdmin, async (req, res) => {
       try {
@@ -343,6 +341,121 @@ async function run() {
       } catch (error) {
         console.error("Error fetching riders:", error);
         res.status(500).send({ error: "Internal Server Error" });
+      }
+    });
+
+    // GET /rider/parcels - Get parcels assigned to the logged-in rider
+    app.get("/rider/parcels", verifyFBToken, async (req, res) => {
+      try {
+        const riderEmail = req.user.email;
+
+        // Find the rider by email
+        const rider = await ridersCollection.findOne({ email: riderEmail });
+
+        if (!rider) {
+          return res.status(404).send({
+            success: false,
+            message: "Rider not found",
+          });
+        }
+
+        // Find all parcels assigned to this rider
+        const assignedParcels = await parcelCollection
+          .find({
+            assigned_rider_id: new ObjectId(rider._id),
+            delivery_status: { $in: ["on_the_way", "delivered", "assigned"] }, // Include both statuses
+          })
+          .sort({ creation_date: -1 }) // Newest first
+          .toArray();
+
+        res.send({
+          success: true,
+          data: assignedParcels,
+        });
+      } catch (error) {
+        console.error("Error fetching rider parcels:", error);
+        res.status(500).send({
+          success: false,
+          message: "Internal server error",
+        });
+      }
+    });
+
+    // PATCH /parcels/:id/pick - mark a parcel as picked
+    app.patch("/parcels/:id/pick", async (req, res) => {
+      try {
+        const parcelId = req.params.id;
+
+        const result = await parcelsCollection.updateOne(
+          { _id: new ObjectId(parcelId) },
+          {
+            $set: {
+              picked_at: new Date(),
+              delivery_status: "on_the_way",
+            },
+          }
+        );
+
+        res.send({ success: result.modifiedCount > 0 });
+      } catch (error) {
+        console.error("Error marking parcel as picked:", error);
+        res.status(500).send({ success: false, message: "Server error" });
+      }
+    });
+
+    // PATCH /rider/parcels/:id/status - Update delivery status
+    app.patch("/rider/parcels/:id/status", verifyFBToken, async (req, res) => {
+      try {
+        const parcelId = req.params.id;
+        const { delivery_status } = req.body;
+        const riderEmail = req.user.email;
+
+        // Find the rider
+        const rider = await ridersCollection.findOne({ email: riderEmail });
+        if (!rider) {
+          return res.status(404).send({
+            success: false,
+            message: "Rider not found",
+          });
+        }
+
+        // Verify this parcel is assigned to this rider
+        const parcel = await parcelCollection.findOne({
+          _id: new ObjectId(parcelId),
+          assigned_rider_id: new ObjectId(rider._id),
+        });
+
+        if (!parcel) {
+          return res.status(404).send({
+            success: false,
+            message: "Parcel not found or not assigned to you",
+          });
+        }
+
+        // Update parcel status
+        const result = await parcelCollection.updateOne(
+          { _id: new ObjectId(parcelId) },
+          {
+            $set: {
+              delivery_status: delivery_status,
+              ...(delivery_status === "delivered" && {
+                delivered_at: new Date(),
+              }),
+            },
+          }
+        );
+
+        res.send({
+          success: true,
+          message: "Status updated successfully",
+          data: result,
+        });
+      } catch (error) {
+        console.error("Error updating parcel status:", error);
+        res.status(500).send({
+          success: false,
+          message: "Internal server error",
+        });
       }
     });
 
@@ -375,8 +488,9 @@ async function run() {
               $set: {
                 assigned_rider_id: new ObjectId(riderId),
                 assigned_rider_name: rider.name,
+                assigned_rider_email: rider.email,
                 assigned_rider_phone: rider.phone,
-                delivery_status: "on_the_way",
+                delivery_status: "assigned",
               },
             }
           );
