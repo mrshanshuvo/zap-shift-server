@@ -63,6 +63,7 @@ async function run() {
       }
     };
 
+    // admin middleware
     const verifyAdmin = async (req, res, next) => {
       const email = req.user.email;
       const user = await usersCollection.findOne({ email: email });
@@ -72,6 +73,7 @@ async function run() {
       next();
     };
 
+    // GET: All users
     app.get("/users/search", verifyFBToken, verifyAdmin, async (req, res) => {
       const emailQuery = req.query.email;
 
@@ -93,6 +95,7 @@ async function run() {
       }
     });
 
+    // GET: User role
     app.get("/users/:email/role", async (req, res) => {
       const { email } = req.params;
 
@@ -116,6 +119,7 @@ async function run() {
       }
     });
 
+    // PATCH: User role
     app.patch(
       "/users/:email/role",
       verifyFBToken,
@@ -137,6 +141,7 @@ async function run() {
       }
     );
 
+    // POST: User
     app.post("/users", async (req, res) => {
       const email = req.body.email;
       const user = req.body;
@@ -162,7 +167,6 @@ async function run() {
       res.send(result);
     });
 
-    // GET parcels by user email, sorted by latest creation_date first
     // GET: All parcels OR parcels by user (created_by), sorted by latest
     app.get("/parcels", verifyFBToken, async (req, res) => {
       try {
@@ -183,7 +187,6 @@ async function run() {
         const options = {
           sort: { createdAt: -1 }, // Newest first
         };
-
         const parcels = await parcelCollection.find(query, options).toArray();
         res.send(parcels);
       } catch (error) {
@@ -294,6 +297,7 @@ async function run() {
       }
     });
 
+    // GET /riders/approved
     app.get(
       "/riders/approved",
       verifyFBToken,
@@ -310,6 +314,89 @@ async function run() {
       }
     );
 
+    // Add these 2 endpoints to your existing backend
+
+    // GET /riders?status=available - Get available riders
+    app.get("/riders", verifyFBToken, verifyAdmin, async (req, res) => {
+      try {
+        const { status } = req.query;
+
+        let query = {};
+        if (status === "available") {
+          query = { status: "approved" };
+        } else if (status) {
+          query = { status };
+        }
+
+        const riders = await ridersCollection
+          .find(query)
+          .project({
+            _id: 1,
+            name: 1,
+            phone: 1,
+            district: 1,
+            region: 1,
+          })
+          .toArray();
+
+        res.send(riders);
+      } catch (error) {
+        console.error("Error fetching riders:", error);
+        res.status(500).send({ error: "Internal Server Error" });
+      }
+    });
+
+    // PATCH /parcels/:id/assign - Assign rider to parcel
+    app.patch(
+      "/parcels/:id/assign",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const parcelId = req.params.id;
+          const { riderId } = req.body;
+
+          // Get rider details
+          const rider = await ridersCollection.findOne({
+            _id: new ObjectId(riderId),
+          });
+
+          if (!rider) {
+            return res.status(404).send({
+              success: false,
+              message: "Rider not found",
+            });
+          }
+
+          // Update parcel with rider info
+          const result = await parcelCollection.updateOne(
+            { _id: new ObjectId(parcelId) },
+            {
+              $set: {
+                assigned_rider_id: new ObjectId(riderId),
+                assigned_rider_name: rider.name,
+                assigned_rider_phone: rider.phone,
+                delivery_status: "on_the_way",
+              },
+            }
+          );
+
+          res.send({
+            success: true,
+            message: "Rider assigned successfully",
+            data: result,
+          });
+        } catch (error) {
+          console.error("Error assigning rider:", error);
+          res.status(500).send({
+            success: false,
+            message: "Internal server error",
+          });
+        }
+      }
+    );
+
+    // PATCH /riders
     app.patch("/riders/:id/status", async (req, res) => {
       const { id } = req.params;
       const { status, email } = req.body;
