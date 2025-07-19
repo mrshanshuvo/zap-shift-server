@@ -96,7 +96,7 @@ async function run() {
     });
 
     // GET: User role
-    app.get("/users/:email/role", async (req, res) => {
+    app.get("/users/:email/role", verifyFBToken, async (req, res) => {
       const { email } = req.params;
 
       try {
@@ -220,7 +220,7 @@ async function run() {
     });
 
     // POST API to add a new parcel
-    app.post("/parcels", async (req, res) => {
+    app.post("/parcels", verifyFBToken, async (req, res) => {
       try {
         const parcelData = req.body;
         const result = await parcelCollection.insertOne(parcelData);
@@ -239,7 +239,7 @@ async function run() {
     });
 
     // DELETE parcel by ID
-    app.delete("/parcels/:id", async (req, res) => {
+    app.delete("/parcels/:id", verifyFBToken, async (req, res) => {
       try {
         const id = req.params.id;
 
@@ -382,7 +382,7 @@ async function run() {
     });
 
     // PATCH /parcels/:id/pick - mark a parcel as picked
-    app.patch("/parcels/:id/pick", async (req, res) => {
+    app.patch("/parcels/:id/pick", verifyFBToken, async (req, res) => {
       try {
         const parcelId = req.params.id;
 
@@ -390,7 +390,7 @@ async function run() {
           { _id: new ObjectId(parcelId) },
           {
             $set: {
-              picked_at: new Date(),
+              picked_at: new Date().toISOString(),
               delivery_status: "on_the_way",
             },
           }
@@ -439,7 +439,7 @@ async function run() {
             $set: {
               delivery_status: delivery_status,
               ...(delivery_status === "delivered" && {
-                delivered_at: new Date(),
+                delivered_at: new Date().toISOString(),
               }),
             },
           }
@@ -511,7 +511,7 @@ async function run() {
     );
 
     // PATCH /riders
-    app.patch("/riders/:id/status", async (req, res) => {
+    app.patch("/riders/:id/status", verifyFBToken, verifyAdmin, async (req, res) => {
       const { id } = req.params;
       const { status, email } = req.body;
       const query = { _id: new ObjectId(id) };
@@ -540,7 +540,7 @@ async function run() {
     });
 
     // POST /riders
-    app.post("/riders", async (req, res) => {
+    app.post("/riders", verifyFBToken, verifyAdmin, async (req, res) => {
       const rider = req.body;
       const result = await ridersCollection.insertOne(rider);
       res.send(result);
@@ -561,7 +561,7 @@ async function run() {
         parcelId: parcelId ? new ObjectId(parcelId) : undefined,
         status,
         message,
-        time: new Date(),
+        time: new Date().toISOString(),
         updated_by,
       };
 
@@ -570,7 +570,7 @@ async function run() {
     });
 
     // POST /payments - mark parcel as paid and save payment record
-    app.post("/payments", async (req, res) => {
+    app.post("/payments", verifyFBToken, async (req, res) => {
       try {
         const {
           parcelId,
@@ -601,7 +601,7 @@ async function run() {
           amount: amount / 100,
           paymentMethod,
           paid_at: new Date().toISOString(),
-          payment_time: paymentTime || new Date(), // fallback to server time
+          payment_time: paymentTime || new Date().toISOString(), // fallback to server time
         };
 
         const paymentInsertResult = await paymentCollection.insertOne(
