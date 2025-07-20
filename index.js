@@ -36,6 +36,8 @@ async function run() {
     const parcelCollection = db.collection("parcels");
     const paymentCollection = db.collection("payments");
     const ridersCollection = db.collection("riders");
+    const cashoutsCollection = db.collection("cashouts");
+    const trackingCollection = db.collection("tracking");
 
     // custom middlewares
     const verifyFBToken = async (req, res, next) => {
@@ -382,11 +384,11 @@ async function run() {
     });
 
     // PATCH /parcels/:id/pick - mark a parcel as picked
+    // In your backend (where you handle /parcels/:id/pick)
     app.patch("/parcels/:id/pick", verifyFBToken, async (req, res) => {
       try {
         const parcelId = req.params.id;
-
-        const result = await parcelsCollection.updateOne(
+        const result = await parcelCollection.updateOne(
           { _id: new ObjectId(parcelId) },
           {
             $set: {
@@ -396,7 +398,11 @@ async function run() {
           }
         );
 
-        res.send({ success: result.modifiedCount > 0 });
+        if (result.modifiedCount === 0) {
+          return res.status(404).send({ success: false, message: "Parcel not found or already picked" });
+        }
+
+        res.send({ success: true, message: "Parcel marked as picked" });
       } catch (error) {
         console.error("Error marking parcel as picked:", error);
         res.status(500).send({ success: false, message: "Server error" });
@@ -406,58 +412,122 @@ async function run() {
     // PATCH /rider/parcels/:id/status - Update delivery status
     app.patch("/rider/parcels/:id/status", verifyFBToken, async (req, res) => {
       try {
-        const parcelId = req.params.id;
+        const { id } = req.params;
         const { delivery_status } = req.body;
         const riderEmail = req.user.email;
 
-        // Find the rider
         const rider = await ridersCollection.findOne({ email: riderEmail });
-        if (!rider) {
-          return res.status(404).send({
-            success: false,
-            message: "Rider not found",
-          });
+        if (!rider) return res.status(404).send({ success: false, message: "Rider not found" });
+
+        const parcel = await parcelCollection.findOne({
+          _id: new ObjectId(id),
+          assigned_rider_id: new ObjectId(rider._id),
+        });
+        if (!parcel) return res.status(404).send({ success: false, message: "Parcel not found or not assigned to you" });
+
+        // Prepare update fields
+        const updateFields = { delivery_status };
+
+        if (delivery_status === "delivered") {
+          updateFields.delivered_at = new Date().toISOString();
+
+          // Earning calculation
+          const isSameDistrict = parcel.senderDistrict === parcel.receiverDistrict;
+          const rate = isSameDistrict ? 0.8 : 0.3;
+          const earning = parcel.cost * rate;
+
+          updateFields.rider_earning = earning;
         }
 
-        // Verify this parcel is assigned to this rider
+        await parcelCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updateFields }
+        );
+
+        res.send({ success: true, message: "Status updated successfully" });
+      } catch (err) {
+        res.status(500).send({ success: false, message: "Server error" });
+      }
+    });
+
+    app.get("/cashouts", verifyFBToken, async (req, res) => {
+      try {
+        const { rider_email } = req.query;
+
+        if (!rider_email) {
+          return res.status(400).send({ success: false, message: "Missing rider_email" });
+        }
+
+        const result = await cashoutsCollection
+          .find({ rider_email })
+          .project({
+            parcel_id: 1,
+            trackingId: 1,
+            earning: 1,
+            cashed_out_at: 1,
+            parcel_name: 1, // optional: store in POST /rider/cashout
+          })
+          .toArray();
+
+        res.send(result);
+      } catch (err) {
+        console.error("Error fetching cashouts:", err);
+        res.status(500).send({ success: false, message: "Server error" });
+      }
+    });
+
+
+    // POST /rider/cashout - Cash out for delivered parcels
+    app.post("/rider/cashout", verifyFBToken, async (req, res) => {
+      try {
+        const { parcelId } = req.body;
+        const riderEmail = req.user.email;
+
         const parcel = await parcelCollection.findOne({
           _id: new ObjectId(parcelId),
-          assigned_rider_id: new ObjectId(rider._id),
+          assigned_rider_email: riderEmail,
+          delivery_status: "delivered",
         });
 
         if (!parcel) {
           return res.status(404).send({
             success: false,
-            message: "Parcel not found or not assigned to you",
+            message: "Parcel not found or not delivered",
           });
         }
 
-        // Update parcel status
-        const result = await parcelCollection.updateOne(
-          { _id: new ObjectId(parcelId) },
-          {
-            $set: {
-              delivery_status: delivery_status,
-              ...(delivery_status === "delivered" && {
-                delivered_at: new Date().toISOString(),
-              }),
-            },
-          }
-        );
-
-        res.send({
-          success: true,
-          message: "Status updated successfully",
-          data: result,
+        // Check if already cashed out
+        const alreadyCashedOut = await cashoutsCollection.findOne({
+          parcel_id: parcel._id,
         });
-      } catch (error) {
-        console.error("Error updating parcel status:", error);
+        if (alreadyCashedOut) {
+          return res.status(400).send({
+            success: false,
+            message: "Already cashed out",
+          });
+        }
+
+        // Insert into cashouts with additional info
+        await cashoutsCollection.insertOne({
+          parcel_id: parcel._id,
+          rider_email: riderEmail,
+          rider_name: parcel.assigned_rider_name,
+          earning: parcel.rider_earning,
+          cashed_out_at: new Date().toISOString(),
+          trackingId: parcel.trackingId,
+          parcel_name: parcel.parcelName, // ✅ Add this field
+        });
+
+        res.send({ success: true, message: "Cash out successful" });
+      } catch (err) {
+        console.error("Cashout error:", err);
         res.status(500).send({
           success: false,
           message: "Internal server error",
         });
       }
     });
+
 
     // PATCH /parcels/:id/assign - Assign rider to parcel
     app.patch(
