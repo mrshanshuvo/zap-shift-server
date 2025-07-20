@@ -37,7 +37,7 @@ async function run() {
     const paymentCollection = db.collection("payments");
     const ridersCollection = db.collection("riders");
     const cashoutsCollection = db.collection("cashouts");
-    const trackingCollection = db.collection("tracking");
+    const trackingCollection = db.collection("trackings");
 
     // custom middlewares
     const verifyFBToken = async (req, res, next) => {
@@ -399,7 +399,10 @@ async function run() {
         );
 
         if (result.modifiedCount === 0) {
-          return res.status(404).send({ success: false, message: "Parcel not found or already picked" });
+          return res.status(404).send({
+            success: false,
+            message: "Parcel not found or already picked",
+          });
         }
 
         res.send({ success: true, message: "Parcel marked as picked" });
@@ -417,13 +420,20 @@ async function run() {
         const riderEmail = req.user.email;
 
         const rider = await ridersCollection.findOne({ email: riderEmail });
-        if (!rider) return res.status(404).send({ success: false, message: "Rider not found" });
+        if (!rider)
+          return res
+            .status(404)
+            .send({ success: false, message: "Rider not found" });
 
         const parcel = await parcelCollection.findOne({
           _id: new ObjectId(id),
           assigned_rider_id: new ObjectId(rider._id),
         });
-        if (!parcel) return res.status(404).send({ success: false, message: "Parcel not found or not assigned to you" });
+        if (!parcel)
+          return res.status(404).send({
+            success: false,
+            message: "Parcel not found or not assigned to you",
+          });
 
         // Prepare update fields
         const updateFields = { delivery_status };
@@ -432,7 +442,8 @@ async function run() {
           updateFields.delivered_at = new Date().toISOString();
 
           // Earning calculation
-          const isSameDistrict = parcel.senderDistrict === parcel.receiverDistrict;
+          const isSameDistrict =
+            parcel.senderDistrict === parcel.receiverDistrict;
           const rate = isSameDistrict ? 0.8 : 0.3;
           const earning = parcel.cost * rate;
 
@@ -455,7 +466,9 @@ async function run() {
         const { rider_email } = req.query;
 
         if (!rider_email) {
-          return res.status(400).send({ success: false, message: "Missing rider_email" });
+          return res
+            .status(400)
+            .send({ success: false, message: "Missing rider_email" });
         }
 
         const result = await cashoutsCollection
@@ -475,7 +488,6 @@ async function run() {
         res.status(500).send({ success: false, message: "Server error" });
       }
     });
-
 
     // POST /rider/cashout - Cash out for delivered parcels
     app.post("/rider/cashout", verifyFBToken, async (req, res) => {
@@ -527,7 +539,6 @@ async function run() {
         });
       }
     });
-
 
     // PATCH /parcels/:id/assign - Assign rider to parcel
     app.patch(
@@ -581,33 +592,38 @@ async function run() {
     );
 
     // PATCH /riders
-    app.patch("/riders/:id/status", verifyFBToken, verifyAdmin, async (req, res) => {
-      const { id } = req.params;
-      const { status, email } = req.body;
-      const query = { _id: new ObjectId(id) };
-      const updateDoc = {
-        $set: { status },
-      };
+    app.patch(
+      "/riders/:id/status",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const { id } = req.params;
+        const { status, email } = req.body;
+        const query = { _id: new ObjectId(id) };
+        const updateDoc = {
+          $set: { status },
+        };
 
-      try {
-        const result = await ridersCollection.updateOne(query, updateDoc);
-        // update user role for approved riders
-        if (status === "approved") {
-          const userQuery = { email };
-          const userUpdateDoc = {
-            $set: { role: "rider" },
-          };
-          const userResult = await usersCollection.updateOne(
-            userQuery,
-            userUpdateDoc
-          );
-          console.log("User role updated:", userResult.modifiedCount);
+        try {
+          const result = await ridersCollection.updateOne(query, updateDoc);
+          // update user role for approved riders
+          if (status === "approved") {
+            const userQuery = { email };
+            const userUpdateDoc = {
+              $set: { role: "rider" },
+            };
+            const userResult = await usersCollection.updateOne(
+              userQuery,
+              userUpdateDoc
+            );
+            console.log("User role updated:", userResult.modifiedCount);
+          }
+          res.send(result);
+        } catch (error) {
+          res.status(500).send({ error: "Internal Server Error" });
         }
-        res.send(result);
-      } catch (error) {
-        res.status(500).send({ error: "Internal Server Error" });
       }
-    });
+    );
 
     // POST /riders
     app.post("/riders", verifyFBToken, verifyAdmin, async (req, res) => {
@@ -616,27 +632,29 @@ async function run() {
       res.send(result);
     });
 
+    // tracking API
+    app.get("/trackings/:trackingId", async (req, res) => {
+      const { trackingId } = req.params;
+      const updates = await trackingCollection
+        .find({ trackingId })
+        .sort({ time: -1 }) // Newest first
+        .toArray();
+      res.send(updates);
+    });
+
     // POST /tracking
-    app.post("/tracking", async (req, res) => {
-      const {
-        trackingId,
-        parcelId,
-        status,
-        message,
-        updated_by = "",
-      } = req.body;
+    app.post("/trackings", async (req, res) => {
+      const update = req.body;
 
-      const log = {
-        trackingId,
-        parcelId: parcelId ? new ObjectId(parcelId) : undefined,
-        status,
-        message,
-        time: new Date().toISOString(),
-        updated_by,
-      };
+      update.time = new Date().toISOString(); // Add current time
+      if (!update.trackingId) {
+        return res
+          .status(400)
+          .send({ success: false, message: "Missing trackingId" });
+      }
 
-      const result = await trackingCollection.insertOne(log);
-      res.send({ success: true, insertedId: result.insertedId });
+      const result = await trackingCollection.insertOne(update);
+      res.status(201).send(result);
     });
 
     // POST /payments - mark parcel as paid and save payment record
