@@ -10,7 +10,8 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const serviceAccount = require("./firebase_admin.json");
+const decodedBase64Key = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8');
+const serviceAccount = JSON.parse(decodedBase64Key);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -29,7 +30,7 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-    await client.connect();
+    // await client.connect();
 
     const db = client.db("parcelDB");
     const usersCollection = db.collection("users");
@@ -342,6 +343,32 @@ async function run() {
         res.send(riders);
       } catch (error) {
         console.error("Error fetching riders:", error);
+        res.status(500).send({ error: "Internal Server Error" });
+      }
+    });
+
+    app.get("/parcels/delivery/status-count", async (req, res) => {
+      const pipeline = [
+        {
+          $group: {
+            _id: "$delivery_status",
+            count: { $sum: 1 },
+          },
+        },
+        {
+          $project: {
+            status: "$_id",
+            count: 1,
+            _id: 0, // Exclude the _id field from the output
+          }
+        }
+      ];
+
+      try {
+        const result = await parcelCollection.aggregate(pipeline).toArray();
+        res.send(result);
+      } catch (error) {
+        console.error("Error fetching parcel delivery status count:", error);
         res.status(500).send({ error: "Internal Server Error" });
       }
     });
