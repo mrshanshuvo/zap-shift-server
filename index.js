@@ -264,7 +264,6 @@ async function run() {
       try {
         const email = req.query.email;
 
-        console.log("Decoded token:", req.user);
         if (req.user.email !== email)
           return res.status(403).send({
             success: false,
@@ -744,7 +743,7 @@ async function run() {
       const amount = req.body.amount;
       try {
         const paymentIntent = await stripe.paymentIntents.create({
-          amount: Math.round(amount * 100), // amount in paisa (smallest currency unit)
+          amount: Math.round(amount * 100),
           currency: "bdt",
           payment_method_types: ["card"],
         });
